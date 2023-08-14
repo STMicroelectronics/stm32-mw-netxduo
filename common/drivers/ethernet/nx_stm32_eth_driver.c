@@ -37,6 +37,8 @@
 /* Place Ethernet BD at uncacheable memory*/
 static  NX_DRIVER_INFORMATION nx_driver_information;
 
+/* Rounded header size */
+static ULONG header_size;
 
 extern ETH_DMADescTypeDef  DMARxDscrTab[ETH_RX_DESC_CNT]; /* Ethernet Rx DMA Descriptors */
 extern ETH_DMADescTypeDef  DMATxDscrTab[ETH_TX_DESC_CNT]; /* Ethernet Tx DMA Descriptors */
@@ -369,7 +371,8 @@ static VOID  _nx_driver_initialize(NX_IP_DRIVER *driver_req_ptr)
   NX_IP           *ip_ptr;
   NX_INTERFACE    *interface_ptr;
   UINT            status;
-
+  CHAR           *payload_address;       /* Address of the first payload*/
+  VOID           *rounded_pool_start;    /* Rounded stating address     */
 
   /* Setup the IP pointer from the driver request.  */
   ip_ptr =  driver_req_ptr -> nx_ip_driver_ptr;
@@ -387,6 +390,18 @@ static VOID  _nx_driver_initialize(NX_IP_DRIVER *driver_req_ptr)
 
   /* Setup the default packet pool for the driver's received packets.  */
   nx_driver_information.nx_driver_information_packet_pool_ptr = ip_ptr -> nx_ip_default_packet_pool;
+
+  /* Get the rounded start pool start. */
+  rounded_pool_start = nx_driver_information.nx_driver_information_packet_pool_ptr->nx_packet_pool_start;
+
+  /* Calculate the address of payload. */
+  payload_address = (CHAR *)((ALIGN_TYPE)rounded_pool_start + sizeof(NX_PACKET));
+
+  /* Align the address of payload. */
+  payload_address = (CHAR *)((((ALIGN_TYPE)payload_address + NX_PACKET_ALIGNMENT  - 1) / NX_PACKET_ALIGNMENT) * NX_PACKET_ALIGNMENT);
+
+  /* Calculate the header size. */
+  header_size = (ULONG)((ALIGN_TYPE)payload_address - (ALIGN_TYPE)rounded_pool_start);
 
   /* Clear the deferred events for the driver.  */
   nx_driver_information.nx_driver_information_deferred_events =       0;
@@ -523,7 +538,17 @@ static VOID  _nx_driver_enable(NX_IP_DRIVER *driver_req_ptr)
   {
     switch (PHYLinkState)
     {
-    case ETH_PHY_STATUS_100MBITS_FULLDUPLEX:
+#if defined(ETH_PHY_1000MBITS_SUPPORTED)
+    case ETH_PHY_STATUS_1000MBITS_FULLDUPLEX:
+      duplex = ETH_FULLDUPLEX_MODE;
+      speed = ETH_SPEED_1000M;
+      break;
+    case ETH_PHY_STATUS_1000MBITS_HALFDUPLEX:
+      duplex = ETH_HALFDUPLEX_MODE;
+      speed = ETH_SPEED_1000M;
+      break;
+#endif
+case ETH_PHY_STATUS_100MBITS_FULLDUPLEX:
       duplex = ETH_FULLDUPLEX_MODE;
       speed = ETH_SPEED_100M;
       break;
@@ -549,6 +574,13 @@ static VOID  _nx_driver_enable(NX_IP_DRIVER *driver_req_ptr)
     HAL_ETH_GetMACConfig(&eth_handle, &MACConf);
     MACConf.DuplexMode = duplex;
     MACConf.Speed = speed;
+#if defined(ETH_DMASBMR_BLEN4) /* ETH AXI support*/
+#if defined(ETH_PHY_1000MBITS_SUPPORTED)
+    MACConf.PortSelect = 0;
+#else
+    MACConf.PortSelect = 1;
+#endif
+#endif
     HAL_ETH_SetMACConfig(&eth_handle, &MACConf);
   }
 
@@ -1385,7 +1417,6 @@ static VOID _nx_driver_transfer_to_netx(NX_IP *ip_ptr, NX_PACKET *packet_ptr)
 /**************************************************************************/
 static UINT  _nx_driver_hardware_initialize(NX_IP_DRIVER *driver_req_ptr)
 {
-
   /* Default to successful return.  */
   driver_req_ptr -> nx_ip_driver_status =  NX_SUCCESS;
 
@@ -1418,7 +1449,13 @@ static UINT  _nx_driver_hardware_initialize(NX_IP_DRIVER *driver_req_ptr)
   dmaDefaultConf.FlushRxPacket = DISABLE;
 #ifndef STM32_ETH_HAL_LEGACY
   dmaDefaultConf.PBLx8Mode = DISABLE;
+#if defined(ETH_DMASBMR_BLEN4) /* ETH AXI support*/
+  dmaDefaultConf.RxOSRLimit = ETH_RX_OSR_LIMIT_3;
+  dmaDefaultConf.TxOSRLimit = ETH_TX_OSR_LIMIT_3;
+  dmaDefaultConf.AXIBLENMaxSize = ETH_BLEN_MAX_SIZE_16;
+#else
   dmaDefaultConf.RebuildINCRxBurst = DISABLE;
+#endif
   dmaDefaultConf.SecondPacketOperate = ENABLE;
   dmaDefaultConf.TCPSegmentation = DISABLE;
   dmaDefaultConf.MaximumSegmentSize = 536;
@@ -1436,8 +1473,11 @@ static UINT  _nx_driver_hardware_initialize(NX_IP_DRIVER *driver_req_ptr)
 #endif
   /* enable OSF bit to enhance throughput */
   HAL_ETH_SetDMAConfig(&eth_handle, &dmaDefaultConf);
-
+#ifdef STM32_ETH_PROMISCUOUS_ENABLE
+  FilterConfig.PromiscuousMode = ENABLE;
+#else
   FilterConfig.PromiscuousMode = DISABLE;
+#endif
   FilterConfig.HashUnicast = DISABLE;
   FilterConfig.HashMulticast = DISABLE;
   FilterConfig.DestAddrInverseFiltering = DISABLE;
@@ -1838,12 +1878,12 @@ static UINT  _nx_driver_hardware_get_status(NX_IP_DRIVER *driver_req_ptr)
   /* Check link status. */
   if(PHYLinkState <= ETH_PHY_STATUS_LINK_DOWN)
   {
-    /* Update Link status if phsical link is down. */
+    /* Update Link status if physical link is down. */
     *(driver_req_ptr->nx_ip_driver_return_ptr) = NX_FALSE;
   }
   else
   {
-    /* Update Link status if phsical link is up. */
+    /* Update Link status if physical link is up. */
     *(driver_req_ptr->nx_ip_driver_return_ptr) = NX_TRUE;
   }
 
@@ -1924,7 +1964,6 @@ void HAL_ETH_RxAllocateCallback(uint8_t ** buff)
 /*    HAL_ETH_ReadData              Read a received packet                */
 /*                                                                        */
 /**************************************************************************/
-
 void HAL_ETH_RxLinkCallback(void **first_packet_ptr, void **last_packet_ptr, uint8_t *buff, uint16_t Length)
 {
   NX_PACKET **first_nx_packet_ptr = (NX_PACKET **)first_packet_ptr;
@@ -1932,7 +1971,7 @@ void HAL_ETH_RxLinkCallback(void **first_packet_ptr, void **last_packet_ptr, uin
   NX_PACKET  *received_packet_ptr;
 
   /* Indicate the offset of the received data.  */
-  uint8_t *data_buffer_ptr = buff - 2U - sizeof(NX_PACKET);
+  uint8_t *data_buffer_ptr = buff - 2U - header_size;
 
   received_packet_ptr = (NX_PACKET *)data_buffer_ptr;
   received_packet_ptr->nx_packet_append_ptr = received_packet_ptr->nx_packet_prepend_ptr + Length;
