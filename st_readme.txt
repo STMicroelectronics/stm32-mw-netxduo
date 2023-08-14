@@ -7,6 +7,11 @@
   ******************************************************************************
   */
 
+### V6.2.1 (14-07-2023) ###
+============================
+- Upgrade to Azure RTOS NetXDuo 6.2.1 with additional following patch
+   + azure_iot addons: fix to handle null URLs in the received ADU JSON
+
 ### V6.2.0 (28-04-2023) ###
 ============================
 - azure_iot addons: fix to handle null URLs in the received ADU JSON
