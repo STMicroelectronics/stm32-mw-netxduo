@@ -1754,7 +1754,7 @@ static UINT  _nx_driver_hardware_initialize(NX_IP_DRIVER *driver_req_ptr)
   FilterConfig.HashMulticast = DISABLE;
   FilterConfig.DestAddrInverseFiltering = DISABLE;
   FilterConfig.PassAllMulticast = DISABLE;
-  FilterConfig.BroadcastFilter = ENABLE;
+  FilterConfig.BroadcastFilter = DISABLE;
   FilterConfig.SrcAddrInverseFiltering = DISABLE;
   FilterConfig.SrcAddrFiltering = DISABLE;
   FilterConfig.HachOrPerfectFilter = DISABLE;
@@ -2616,6 +2616,7 @@ UINT  nx_driver_ptp_clock_callback(NX_PTP_CLIENT *client_ptr, UINT operation,
         time_offset.NanoSeconds = time_ptr->nanosecond;
         HAL_ETH_PTP_AddTimeOffset(&heth, HAL_ETH_PTP_POSITIVE_UPDATE, &time_offset);
       }
+
       TX_RESTORE
 
       break;
