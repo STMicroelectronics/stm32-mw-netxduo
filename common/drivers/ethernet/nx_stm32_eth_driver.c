@@ -877,7 +877,6 @@ static VOID  _nx_driver_packet_send(NX_IP_DRIVER *driver_req_ptr)
   /* Check to make sure the link is up.  */
   if (nx_driver_information.nx_driver_information_state != NX_DRIVER_STATE_LINK_ENABLED)
   {
-
     /* Inidate an unsuccessful packet send.  */
     driver_req_ptr -> nx_ip_driver_status =  NX_DRIVER_ERROR;
 
@@ -891,73 +890,72 @@ static VOID  _nx_driver_packet_send(NX_IP_DRIVER *driver_req_ptr)
   /* Place the ethernet frame at the front of the packet.  */
   packet_ptr =  driver_req_ptr -> nx_ip_driver_packet;
 
-  /* Adjust the prepend pointer.  */
-  packet_ptr -> nx_packet_prepend_ptr =
+  if (driver_req_ptr -> nx_ip_driver_command != NX_LINK_RAW_PACKET_SEND)
+  {
+    /* Adjust the prepend pointer.  */
+    packet_ptr -> nx_packet_prepend_ptr =
     packet_ptr -> nx_packet_prepend_ptr - NX_DRIVER_ETHERNET_FRAME_SIZE;
 
-  /* Adjust the packet length.  */
-  packet_ptr -> nx_packet_length = packet_ptr -> nx_packet_length + NX_DRIVER_ETHERNET_FRAME_SIZE;
+    /* Adjust the packet length.  */
+    packet_ptr -> nx_packet_length = packet_ptr -> nx_packet_length + NX_DRIVER_ETHERNET_FRAME_SIZE;
 
-  /* Setup the ethernet frame pointer to build the ethernet frame.  Backup another 2
-  * bytes to get 32-bit word alignment.  */
-  ethernet_frame_ptr =  (ULONG *) (packet_ptr -> nx_packet_prepend_ptr - 2);
+    /* Setup the ethernet frame pointer to build the ethernet frame.  Backup another 2
+    * bytes to get 32-bit word alignment.  */
+    ethernet_frame_ptr =  (ULONG *) (packet_ptr -> nx_packet_prepend_ptr - 2);
 
-  /* Set up the hardware addresses in the Ethernet header. */
-  *ethernet_frame_ptr       =  driver_req_ptr -> nx_ip_driver_physical_address_msw;
-  *(ethernet_frame_ptr + 1) =  driver_req_ptr -> nx_ip_driver_physical_address_lsw;
+    /* Set up the hardware addresses in the Ethernet header. */
+    *ethernet_frame_ptr       =  driver_req_ptr -> nx_ip_driver_physical_address_msw;
+    *(ethernet_frame_ptr + 1) =  driver_req_ptr -> nx_ip_driver_physical_address_lsw;
 
-  *(ethernet_frame_ptr + 2) =  (ip_ptr -> nx_ip_arp_physical_address_msw << 16) |
+    *(ethernet_frame_ptr + 2) =  (ip_ptr -> nx_ip_arp_physical_address_msw << 16) |
     (ip_ptr -> nx_ip_arp_physical_address_lsw >> 16);
-  *(ethernet_frame_ptr + 3) =  (ip_ptr -> nx_ip_arp_physical_address_lsw << 16);
+    *(ethernet_frame_ptr + 3) =  (ip_ptr -> nx_ip_arp_physical_address_lsw << 16);
 
-  /* Set up the frame type field in the Ethernet harder. */
-  if ((driver_req_ptr -> nx_ip_driver_command == NX_LINK_ARP_SEND)||
-      (driver_req_ptr -> nx_ip_driver_command == NX_LINK_ARP_RESPONSE_SEND))
-  {
+    /* Set up the frame type field in the Ethernet harder. */
+    if ((driver_req_ptr -> nx_ip_driver_command == NX_LINK_ARP_SEND)||
+    (driver_req_ptr -> nx_ip_driver_command == NX_LINK_ARP_RESPONSE_SEND))
+    {
 
-    *(ethernet_frame_ptr + 3) |= NX_DRIVER_ETHERNET_ARP;
-  }
-  else if(driver_req_ptr -> nx_ip_driver_command == NX_LINK_RARP_SEND)
-  {
-
-    *(ethernet_frame_ptr + 3) |= NX_DRIVER_ETHERNET_RARP;
-  }
+      *(ethernet_frame_ptr + 3) |= NX_DRIVER_ETHERNET_ARP;
+    }
+    else if(driver_req_ptr -> nx_ip_driver_command == NX_LINK_RARP_SEND)
+    {
+      *(ethernet_frame_ptr + 3) |= NX_DRIVER_ETHERNET_RARP;
+    }
 
 #ifdef FEATURE_NX_IPV6
-  else if(packet_ptr -> nx_packet_ip_version == NX_IP_VERSION_V6)
-  {
-
+    else if(packet_ptr -> nx_packet_ip_version == NX_IP_VERSION_V6)
+    {
     *(ethernet_frame_ptr + 3) |= NX_DRIVER_ETHERNET_IPV6;
-  }
+    }
 #endif /* FEATURE_NX_IPV6 */
 
-  else
-  {
+    else
+    {
+      *(ethernet_frame_ptr + 3) |= NX_DRIVER_ETHERNET_IP;
+    }
 
-    *(ethernet_frame_ptr + 3) |= NX_DRIVER_ETHERNET_IP;
-  }
+    /* Endian swapping if NX_LITTLE_ENDIAN is defined.  */
+    NX_CHANGE_ULONG_ENDIAN(*(ethernet_frame_ptr));
+    NX_CHANGE_ULONG_ENDIAN(*(ethernet_frame_ptr + 1));
+    NX_CHANGE_ULONG_ENDIAN(*(ethernet_frame_ptr + 2));
+    NX_CHANGE_ULONG_ENDIAN(*(ethernet_frame_ptr + 3));
 
-  /* Endian swapping if NX_LITTLE_ENDIAN is defined.  */
-  NX_CHANGE_ULONG_ENDIAN(*(ethernet_frame_ptr));
-  NX_CHANGE_ULONG_ENDIAN(*(ethernet_frame_ptr + 1));
-  NX_CHANGE_ULONG_ENDIAN(*(ethernet_frame_ptr + 2));
-  NX_CHANGE_ULONG_ENDIAN(*(ethernet_frame_ptr + 3));
+    /* Determine if the packet exceeds the driver's MTU.  */
+    if (packet_ptr -> nx_packet_length > NX_DRIVER_ETHERNET_MTU)
+    {
+      /* This packet exceeds the size of the driver's MTU. Simply throw it away! */
 
-  /* Determine if the packet exceeds the driver's MTU.  */
-  if (packet_ptr -> nx_packet_length > NX_DRIVER_ETHERNET_MTU)
-  {
+      /* Remove the Ethernet header.  */
+      NX_DRIVER_ETHERNET_HEADER_REMOVE(packet_ptr);
 
-    /* This packet exceeds the size of the driver's MTU. Simply throw it away! */
+      /* Indicate an unsuccessful packet send.  */
+      driver_req_ptr -> nx_ip_driver_status =  NX_DRIVER_ERROR;
 
-    /* Remove the Ethernet header.  */
-    NX_DRIVER_ETHERNET_HEADER_REMOVE(packet_ptr);
-
-    /* Indicate an unsuccessful packet send.  */
-    driver_req_ptr -> nx_ip_driver_status =  NX_DRIVER_ERROR;
-
-    /* Link is not up, simply free the packet.  */
-    nx_packet_transmit_release(packet_ptr);
-    return;
+      /* Link is not up, simply free the packet.  */
+      nx_packet_transmit_release(packet_ptr);
+      return;
+    }
   }
 
   /* Transmit the packet through the Ethernet controller low level access routine. */
@@ -2061,6 +2059,14 @@ static UINT  _nx_driver_hardware_packet_send(NX_PACKET *packet_ptr)
 #else
   TxPacketCfg.ChecksumCtrl = ETH_CHECKSUM_DISABLE;
 #endif /* NX_ENABLE_INTERFACE_CAPABILITY */
+
+#ifdef NX_DRIVER_ENABLE_PTP
+  /* Enable PTP timestamp */
+  if (packet_ptr -> nx_packet_interface_capability_flag & NX_INTERFACE_CAPABILITY_PTP_TIMESTAMP)
+  {
+    HAL_ETH_PTP_InsertTxTimestamp(&eth_handle);
+  }
+#endif /* NX_DRIVER_ENABLE_PTP */
 
   TxPacketCfg.Length = buffLen;
   TxPacketCfg.TxBuffer = Txbuffer;
